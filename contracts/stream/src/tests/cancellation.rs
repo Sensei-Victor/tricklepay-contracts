@@ -204,6 +204,34 @@ fn cancel_at_start_time_refunds_the_full_amount() {
     );
 }
 
+#[test]
+fn cancel_millisecond_timestamp_stream_refunds_full_deposit() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(1_700_000_000_000);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &1_700_000_001_000,
+        &1_700_000_003_000,
+        &1_700_000_002_000,
+    );
+
+    assert_eq!(t.token.balance(&t.sender), 0);
+    assert_eq!(t.contract.cancel(&id), 1_000);
+    assert_eq!(t.token.balance(&t.sender), 1_000);
+
+    let stream = t.contract.get_stream(&id);
+    assert!(stream.cancelled);
+    assert_eq!(stream.total_amount, 0);
+    assert_eq!(t.contract.status(&id), StreamStatus::Cancelled);
+    assert_eq!(
+        t.contract.try_withdraw(&id),
+        Err(Ok(StreamError::NothingToWithdraw))
+    );
+}
+
 /// Cancel a stream before its cliff has been reached.
 #[test]
 fn cancel_with_cliff_not_reached() {

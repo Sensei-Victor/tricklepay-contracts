@@ -53,6 +53,7 @@ jobs:
               [/(^|\/)\.devcontainer\//, 'changes dev container config, which can run commands (.devcontainer/)'],
               [/(^|\/)\.idea\//, 'changes IDE config (.idea/)'],
               [/(^|\/)\.husky\//, 'changes git hooks (.husky/)'],
+              [/(^|\/)\.githooks\//, 'changes git hooks (.githooks/), which run on every commit once core.hooksPath points at them'],
               [/(^|\/)\.git(ignore|attributes|modules)$/, 'changes git config that can hide or redirect files'],
               [/(^|\/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmrc)$/, 'changes package manager config'],
               [/(^|\/)build\.rs$/, 'changes a Rust build script, which runs on every build'],

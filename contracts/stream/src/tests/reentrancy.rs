@@ -27,7 +27,7 @@ impl ReentrantToken {
             let stream_client = StreamContractClient::new(&env, &stream_contract);
 
             // Try to call withdraw on stream id 0.
-            let _ = stream_client.try_withdraw(&0);
+            stream_client.withdraw(&0);
         }
 
         // Complete the actual transfer (simplified - just for testing).
@@ -66,9 +66,6 @@ fn token_reentrancy_during_withdraw_is_rejected() {
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    // Configure the hostile token to attempt re-entry into the stream contract.
-    hostile_token_client.set_reentrancy_target(&stream_contract_id);
-
     env.ledger().set_timestamp(100);
 
     // Create a stream using the hostile token.
@@ -82,6 +79,9 @@ fn token_reentrancy_during_withdraw_is_rejected() {
         &1_100,
         &100,
     );
+
+    // Enable the callback only after the initial funding transfer succeeds.
+    hostile_token_client.set_reentrancy_target(&stream_contract_id);
 
     // Advance time so some tokens vest.
     env.ledger().set_timestamp(600);
@@ -109,8 +109,6 @@ fn token_reentrancy_during_cancel_is_rejected() {
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    hostile_token_client.set_reentrancy_target(&stream_contract_id);
-
     env.ledger().set_timestamp(100);
 
     let id = stream_contract.create_stream(
@@ -122,6 +120,9 @@ fn token_reentrancy_during_cancel_is_rejected() {
         &1_100,
         &100,
     );
+
+    // Enable the callback only after the initial funding transfer succeeds.
+    hostile_token_client.set_reentrancy_target(&stream_contract_id);
 
     env.ledger().set_timestamp(600);
 

@@ -50,6 +50,27 @@ bash ./scripts/check-release-overflow.sh
 CI runs the same checks on every push and pull request. The audit command uses the
 allowlist in `.cargo/audit.toml`.
 
+The vesting and status property tests use Proptest's default 256 cases per
+property. To run more cases before a release or after changing property-tested
+logic, set `PROPTEST_CASES` for the test command:
+
+```bash
+PROPTEST_CASES=10000 cargo test
+```
+
+In PowerShell, use:
+
+```powershell
+$env:PROPTEST_CASES = "10000"; cargo test
+```
+
+When Proptest finds a failure, it saves the seed under the relevant source
+directory's `proptest-regressions/` folder (for example,
+`contracts/stream/src/proptest-regressions/` for the vesting and status
+properties). Proptest replays saved failures automatically when that property
+runs again. To rerun just one property, pass its test name to Cargo, for
+example `cargo test vested_between_zero_and_total`.
+
 If you intentionally changed the contract interface, update the snapshot before opening your PR:
 ```bash
 make wasm
@@ -227,6 +248,11 @@ Conventions the suite expects:
   for boundary cases no entry point can reach; read the fixture in
   `tests/helpers.rs` before duplicating one of them.
 
+When a property test finds a failing input, force-add its generated file from
+`proptest-regressions/` together with the fix for that failure, using
+`git add -f <path-to-regression-file>`. These files are ignored by default, so
+force-adding is required to share the regression seed with every contributor.
+
 For events, use the fixture helpers instead of decoding XDR by hand:
 `event_publishers()` returns who published the latest invocation's events in
 order (the token contract's transfer, then the stream contract's own event),
@@ -340,11 +366,9 @@ fixed schedule.
      and open a new, empty `## [Unreleased]` section above it for whatever
      comes next.
    - Bump `version` in the workspace `Cargo.toml` to match.
-   - Run `make wasm` and record the resulting
-     `target/wasm32v1-none/release/tricklepay_stream.wasm` SHA-256 hash
-     (`sha256sum target/wasm32v1-none/release/tricklepay_stream.wasm`) in the
-     tag annotation — this is the hash anyone can later check a live
-     deployment against (see
+   - Run `make wasm-hash` and record its `sha256:` output in the tag
+     annotation — this is the hash anyone can later check a live deployment
+     against (see
      [Verifying a deployment](README.md#verifying-a-deployment)).
 4. Tag that commit with an annotated tag, `vX.Y.Z`
    (`git tag -a vX.Y.Z -m "..."`), and push it (`git push origin vX.Y.Z`).

@@ -872,3 +872,94 @@ fn token_contract_may_be_a_stream_recipient() {
     assert_eq!(stream.token, t.token_address);
     assert_eq!(stream.total_amount, 1_000);
 }
+
+/// A stream where sender == recipient is accepted and behaves normally.
+///
+/// This test pins the behavior documented in README.md § Deliberately omitted
+/// validations: "Sender and recipient being the same address: A stream from an
+/// address to itself has the effect of locking the sender's own tokens and
+/// handing them back over time. This is a legitimate way to self-stream funds."
+///
+/// See also docs/DECISIONS.md § ADR: Self-Streams Are Allowed.
+#[test]
+fn self_stream_is_accepted_and_behaves_normally() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+
+    // Create a stream where sender == recipient (self-stream).
+    let self_address = t.sender.clone();
+    let id = t.contract.create_stream(
+        &self_address,
+        &self_address, // recipient is the same as sender
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+
+    // The stream is created successfully.
+    assert_eq!(id, 0);
+    assert_eq!(t.contract.stream_count(), 1);
+
+    // The full amount is locked in the contract.
+    assert_eq!(t.token.balance(&self_address), 0);
+    assert_eq!(t.token.balance(&t.contract.address), 1_000);
+
+    // The stream record reflects the self-stream.
+    let stream = t.contract.get_stream(&id);
+    assert_eq!(stream.sender, self_address);
+    assert_eq!(stream.recipient, self_address);
+    assert_eq!(stream.token, t.token_address);
+    assert_eq!(stream.total_amount, 1_000);
+    assert_eq!(stream.withdrawn, 0);
+    assert!(!stream.cancelled);
+
+    // Vesting works normally. At the midpoint, 500 tokens have vested.
+    t.set_time(600);
+    assert_eq!(t.contract.vested(&id), 500);
+    assert_eq!(t.contract.withdrawable(&id), 500);
+    assert_eq!(t.contract.locked(&id), 500);
+
+    // Withdrawal works: the self-address can withdraw vested funds.
+    let withdrawn = t.contract.withdraw(&id);
+    assert_eq!(withdrawn, 500);
+    assert_eq!(t.token.balance(&self_address), 500);
+    assert_eq!(t.token.balance(&t.contract.address), 500);
+    assert_eq!(t.contract.get_stream(&id).withdrawn, 500);
+
+    // Create a second self-stream and cancel it.
+    let id2 = t.contract.create_stream(
+        &self_address,
+        &self_address,
+        &t.token_address,
+        &500, // the 500 remaining from withdrawal above
+        &600,
+        &1_600,
+        &600,
+    );
+    assert_eq!(id2, 1);
+    assert_eq!(t.token.balance(&self_address), 0);
+    assert_eq!(t.token.balance(&t.contract.address), 1_000);
+
+    // Cancel the second self-stream at the midpoint.
+    t.set_time(1_100);
+    let refund = t.contract.cancel(&id2);
+
+    // The refund goes back to the self-address (who is both sender and recipient).
+    // At t=1100, elapsed = 500 out of 1000, so vested = 250, refund = 250.
+    assert_eq!(refund, 250);
+    assert_eq!(t.token.balance(&self_address), 250);
+    assert!(t.contract.get_stream(&id2).cancelled);
+
+    // The self-address can still withdraw the vested portion from the cancelled stream.
+    assert_eq!(t.contract.withdrawable(&id2), 250);
+    let final_withdrawal = t.contract.withdraw(&id2);
+    assert_eq!(final_withdrawal, 250);
+    assert_eq!(t.token.balance(&self_address), 500);
+
+    // Final accounting: the self-address has withdrawn 500 from the first stream
+    // and 500 total from the second stream (250 refund + 250 withdrawal).
+    // The contract now holds 500 from the first stream (still unvested).
+    assert_eq!(t.token.balance(&t.contract.address), 500);
+}

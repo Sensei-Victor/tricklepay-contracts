@@ -1,28 +1,28 @@
-#!/bin/bash
-
-# Diff the built contract interface against the stored snapshot.
-# Exits non-zero if they differ, exposing any accidental ABI changes.
+#!/usr/bin/env bash
 
 set -euo pipefail
 
-# Ensure we run from the project root
-ROOT_DIR="$(git rev-parse --show-toplevel)"
-cd "$ROOT_DIR"
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+wasm="$repo_root/target/wasm32v1-none/release/tricklepay_stream.wasm"
+expected="$repo_root/docs/interface.txt"
 
-WASM="target/wasm32v1-none/release/tricklepay_stream.wasm"
-SNAPSHOT="docs/interface.txt"
-
-if [ ! -f "$WASM" ]; then
-    echo "Error: WASM not found at $WASM. Run 'make wasm' first." >&2
+if [[ ! -f "$wasm" ]]; then
+    echo "missing Wasm artifact: $wasm" >&2
+    echo "run 'make wasm' before checking the interface" >&2
     exit 1
 fi
 
-if [ ! -f "$SNAPSHOT" ]; then
-    echo "Error: Snapshot not found at $SNAPSHOT." >&2
+if [[ ! -f "$expected" ]]; then
+    echo "missing interface snapshot: $expected" >&2
     exit 1
 fi
 
-echo "Diffing built interface against $SNAPSHOT..."
-stellar contract inspect --wasm "$WASM" | diff -u "$SNAPSHOT" -
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
 
-echo "Interface matches."
+stellar contract info interface --wasm "$wasm" --output rust >"$tmp"
+
+if ! diff -u "$expected" "$tmp"; then
+    echo "contract interface changed; regenerate docs/interface.txt" >&2
+    exit 1
+fi

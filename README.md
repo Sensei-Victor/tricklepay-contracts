@@ -48,6 +48,8 @@ SDK changes can affect the contract ABI or what the Soroban host accepts.
 ## How a stream works
 
 **All timestamps are Unix seconds.** The `start_time`, `end_time`, and `cliff_time` parameters are `u64` Unix timestamps in seconds, matching the Soroban ledger clock (`env.ledger().timestamp()`). A caller using milliseconds (such as JavaScript's `Date.now()`) would create a stream that appears to never start, since a timestamp like `1735689600000` (January 1, 2025 in milliseconds) is interpreted as a date billions of years in the future when read as seconds. The contract does not validate timestamp magnitude or convert units; the caller must ensure all times are in seconds.
+The decision to leave timestamp magnitude unbounded is recorded in
+[ADR: Do Not Bound Timestamp Magnitude](docs/ADR_TIMESTAMP_MAGNITUDE.md).
 
 **Concrete example:** To create a one-month stream starting on **January 1, 2025 at 00:00:00 UTC** and ending on **February 1, 2025 at 00:00:00 UTC**, convert both dates to Unix seconds:
 
@@ -102,6 +104,28 @@ a `total_amount` of zero also reports full progress (10000) at all times.
 
 All amounts are in the token's smallest unit. All times are Unix timestamps in
 seconds, matching the ledger clock.
+
+### Read-only view functions
+
+| View | Return type | Description |
+| ---- | ----------- | ----------- |
+| `get_stream(id)` | `Stream` | Fetch the full stream record. |
+| `stream_exists(id)` | `bool` | Check whether a stream record exists, including cancelled or completed streams. |
+| `withdrawable(id)` | `i128` | Amount vested but not yet withdrawn. |
+| `vested(id)` | `i128` | Total amount vested at the current ledger time. |
+| `vested_at(id, timestamp)` | `i128` | Project the vested amount at a specified Unix timestamp. |
+| `locked(id)` | `i128` | Amount not yet vested at the current ledger time. |
+| `progress(id)` | `u32` | Vesting progress in basis points, from `0` to `10000`. |
+| `status(id)` | `StreamStatus` | Lifecycle status at the current ledger time. |
+| `stream_count()` | `u64` | Number of streams created so far. |
+| `max_amount()` | `i128` | Maximum amount accepted by `create_stream`. |
+
+`vested_at(id, timestamp)` uses the same calculation as `vested(id)` when
+`timestamp` equals the current ledger time. Times before the start or cliff
+return zero, and times at or after the end return the full amount. For a
+cancelled stream, timestamps at or after cancellation return the amount vested
+when it was cancelled. `stream_exists(id)` only checks whether a record is
+stored; it does not write state or publish events.
 
 ### Example schedule
 
@@ -317,14 +341,16 @@ Using the no-cliff reference stream — 1000 units, `start_time = 100`,
 `end_time = 1100` — at `now = 1100` (the end), after the recipient has called
 `withdraw` and received all 1000 units:
 
-| View               | Return value                                               | Reason                                             |
-| ------------------ | ---------------------------------------------------------- | -------------------------------------------------- |
-| `get_stream`       | stream record with `withdrawn = 1000`, `cancelled = false` | the record is never deleted                        |
-| `withdrawable(id)` | `0`                                                        | `vested(1000) - withdrawn(1000) = 0`               |
-| `vested(id)`       | `1000`                                                     | at or after `end_time`, the full amount has vested |
-| `locked(id)`       | `0`                                                        | `total_amount(1000) - vested(1000) = 0`            |
-| `progress(id)`     | `10000`                                                    | 100 % — fully vested                               |
-| `status(id)`       | `Completed`                                                | `now >= end_time` and the stream was not cancelled |
+| View | Return value | Reason |
+| ---- | ------------ | ------ |
+| `get_stream` | stream record with `withdrawn = 1000`, `cancelled = false` | the record is never deleted |
+| `withdrawable(id)` | `0` | `vested(1000) - withdrawn(1000) = 0` |
+| `vested(id)` | `1000` | at or after `end_time`, the full amount has vested |
+| `locked(id)` | `0` | `total_amount(1000) - vested(1000) = 0` |
+| `progress(id)` | `10000` | 100 % — fully vested |
+| `status(id)` | `Completed` | `now >= end_time` and the stream was not cancelled |
+| `vested_at(id, 1100)` | `1000` | projection at the end of the schedule |
+| `stream_exists(id)` | `true` | the record remains stored after completion |
 
 Calling `withdraw` again after the balance is zero returns
 `Err(NothingToWithdraw)` — nothing is transferred and nothing is recorded.
@@ -429,6 +455,7 @@ All common contributor tasks are wrapped in the `Makefile`. Run `make` (or
   fmt        Format the workspace in place (cargo fmt).
   fmt-check  Verify formatting without modifying files (used in CI).
   lint       Lint every target and treat warnings as errors (cargo clippy -D warnings).
+  lint-scripts  Check shell syntax and lint scripts with ShellCheck.
   audit      Audit dependencies for known vulnerabilities (cargo audit --deny warnings).
   clean      Remove build artifacts (cargo clean).
   deploy     Build, install, and deploy to testnet. Pass an identity: make deploy ID=alice
@@ -441,6 +468,7 @@ make check          # formatting + lints + tests (mirrors CI)
 make test           # run the test suite only
 make fmt            # auto-format all Rust source files
 make wasm           # produce the release WASM ready for deployment
+make lint-scripts   # check scripts/*.sh with bash -n and ShellCheck
 make audit          # check for vulnerable or unmaintained dependencies
 make deploy ID=alice  # deploy to testnet using a Stellar CLI identity
 ```
@@ -449,6 +477,11 @@ make deploy ID=alice  # deploy to testnet using a Stellar CLI identity
 > Some transitive Soroban test-host dependencies are allowlisted in
 > `.cargo/audit.toml` because they are not compiled into the deployed WASM.
 > See [`.cargo/AUDIT.md`](.cargo/AUDIT.md) for the full explanation.
+
+The release profile keeps Rust overflow checks enabled. This makes arithmetic
+such as `stream.withdrawn += amount` abort on overflow instead of wrapping, so
+removing `overflow-checks = true` would remove a safety check from contract
+balance updates.
 
 ### Reading the test suite
 
@@ -477,7 +510,8 @@ function was called. It lives in two places:
 | `creation.rs`     | `create_stream` validation: schedule and amount bounds, participant checks, id-counter exhaustion, deterministic validation order | `create_stream_rejects_invalid_parameters`, `create_stream_rejects_amount_above_max`, `create_stream_rejects_the_contract_as_recipient`, `create_stream_validation_order_is_deterministic`, `stream_id_counter_overflow_fails_closed` |
 | `withdrawal.rs`   | `withdraw`/`withdraw_amount`: stepwise vesting, cliff gating, partial draws, exact-end and exact-cliff boundaries, double-withdraw and unknown-id guards | `withdraw_releases_vested_in_steps`, `cliff_blocks_withdrawal_until_reached`, `withdraw_amount_available_plus_one_receives_insufficient_balance`, `operations_on_unknown_stream_report_not_found` |
 | `cancellation.rs` | `cancel`: the vested/refund split, boundary timing (start, cliff, end), rejecting a second cancel or one after completion | `cancel_refunds_unvested_and_preserves_vested`, `cancel_with_cliff_not_reached`, `cancel_on_stream_at_end_time_is_rejected`, `test_repeated_cancel_fails` |
-| `views.rs`        | Read-only queries (`progress`, `locked`, `status`, etc.): monotonicity over time, correctness on a cancelled stream, no state or event side effects | `progress_never_decreases_as_time_advances`, `locked_never_goes_negative_across_sampled_times`, `views_are_correct_on_a_cancelled_stream`, `test_view_functions_publish_no_events` |
+| `views.rs`        | Read-only queries, including timestamp projections, stream existence, and the amount ceiling; no state or event side effects | `vested_at_projects_the_schedule_and_freezes_after_cancellation`, `stream_exists_reports_existing_unknown_cancelled_and_completed_streams`, `max_amount_view_returns_i64_max` |
+| `documentation.rs` | README error-code table matches every `StreamError` variant and code | `readme_error_table_matches_stream_error_variants_and_codes` |
 | `events.rs`       | Event ordering and topic correctness for every entry point, and silence on a rejected call        | `create_emits_created_after_the_funding_transfer`, `lifecycle_events_follow_operation_order`, `created_event_topics_index_sender_and_recipient`, `rejected_create_publishes_no_events` |
 | `storage.rs`      | `DataKey` encoding across the id range, and persistent/instance TTL bumps on both sides of `BUMP_THRESHOLD` | `stream_ids_map_to_distinct_persistent_keys`, `a_stream_entry_ttl_decays_with_the_ledger_sequence`, `withdrawing_restores_a_decayed_stream_ttl`, `view_calls_do_not_extend_the_instance_ttl` |
 | `auth.rs`         | Authorization requirements for every mutating entry point                                         | `withdraw_requires_recipient_authorization`, `cancel_requires_sender_authorization`, `test_third_party_cannot_mutate_streams`              |
@@ -786,7 +820,7 @@ cargo build --release --target wasm32v1-none
 Then print the interface with the Stellar CLI:
 
 ```bash
-stellar contract inspect \
+stellar contract info interface \
   --wasm target/wasm32v1-none/release/tricklepay_stream.wasm
 ```
 
@@ -802,12 +836,15 @@ fn withdraw(id: u64) -> result<i128, error<contract>>
 fn withdraw_amount(id: u64, amount: i128) -> result<i128, error<contract>>
 fn cancel(id: u64) -> result<i128, error<contract>>
 fn get_stream(id: u64) -> result<stream, error<contract>>
+fn stream_exists(id: u64) -> bool
 fn withdrawable(id: u64) -> result<i128, error<contract>>
 fn vested(id: u64) -> result<i128, error<contract>>
+fn vested_at(id: u64, timestamp: u64) -> result<i128, error<contract>>
 fn locked(id: u64) -> result<i128, error<contract>>
 fn progress(id: u64) -> result<u32, error<contract>>
 fn status(id: u64) -> result<stream_status, error<contract>>
 fn stream_count() -> u64
+fn max_amount() -> i128
 ```
 
 ### From a deployed contract
@@ -822,15 +859,15 @@ stellar contract fetch \
   --network <NETWORK> \
   --out-file fetched.wasm
 
-stellar contract inspect --wasm fetched.wasm
+stellar contract info interface --wasm fetched.wasm
 ```
 
-Or pass `--id` directly to `inspect` if you only need the interface and do not
+Or pass `--contract-id` directly to `info interface` if you only need the interface and do not
 want to keep the WASM file locally:
 
 ```bash
-stellar contract inspect \
-  --id <CONTRACT_ID> \
+stellar contract info interface \
+  --contract-id <CONTRACT_ID> \
   --network <NETWORK>
 ```
 
@@ -850,10 +887,12 @@ deployed binary used. The pinned toolchain in `rust-toolchain.toml` ensures
 this, but only if you have not overridden it:
 
 ```bash
-cargo build --release --target wasm32v1-none
+make wasm-hash
 ```
 
-The optimised artifact is written to
+This builds the optimised artifact with locked dependencies and prints its
+SHA-256 hash in a `sha256:`-prefixed format. The target supports `sha256sum`
+and `shasum -a 256`. The artifact is written to
 `target/wasm32v1-none/release/tricklepay_stream.wasm`.
 
 **Why `wasm32v1-none`?** On Rust 1.82 and later, the familiar
@@ -865,12 +904,6 @@ supported target that avoids those extensions and produces a module the
 Soroban environment accepts. If you build with the wrong target, Soroban
 fails with a `WasmVm` error about unsupported `reference-types` or
 `multi-value` features.
-
-Compute its SHA-256 hash:
-
-```bash
-sha256sum target/wasm32v1-none/release/tricklepay_stream.wasm
-```
 
 ### Step 2 — fetch the on-chain bytecode hash
 
@@ -958,7 +991,9 @@ see `.cargo/audit.toml` for the allowlist.
 The suite covers the vesting math in isolation and the contract end to end,
 including the storage and event behaviour described above. See
 [Reading the test suite](#reading-the-test-suite) for which file and which
-named test covers a given behaviour.
+named test covers a given behaviour. The views suite also covers timestamp
+projections, stream existence, and read-only side effects, while the
+documentation suite checks the README error table against `StreamError`.
 
 ## Deploying to testnet
 
@@ -1109,7 +1144,8 @@ retains the remainder.
 `create_stream` rejects any `total_amount` greater than **`i64::MAX`
 (9 223 372 036 854 775 807 stroops, approximately 9.2 × 10¹⁸)**. This is not
 an arbitrary policy limit — it is a safety bound derived from the vesting
-arithmetic.
+arithmetic. Clients can query `max_amount()` on the deployed contract rather
+than copying this ceiling into application code.
 
 The vesting formula multiplies `total_amount` by an elapsed-time value before
 dividing:

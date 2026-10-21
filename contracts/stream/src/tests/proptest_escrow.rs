@@ -29,10 +29,13 @@ fn assert_escrow_balance_invariant(t: &StreamTest, stream_ids: &[u64]) {
     let mut expected_balance: i128 = 0;
 
     for &id in stream_ids {
-        if let Ok(Ok(stream)) = t.contract.try_get_stream(&id) {
-            let unpaid = stream.total_amount - stream.withdrawn;
-            expected_balance += unpaid;
-        }
+        let stream = t
+            .contract
+            .try_get_stream(&id)
+            .expect("stream lookup should succeed")
+            .expect("stream should exist");
+        let unpaid = stream.total_amount - stream.withdrawn;
+        expected_balance += unpaid;
     }
 
     let actual_balance = t.token.balance(&t.contract.address);

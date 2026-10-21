@@ -134,30 +134,12 @@ pub(crate) fn publish_created(env: &Env, id: u64, stream: &Stream) {
     .publish(env);
 }
 
-/// Publish [`Withdrawn`] for `amount` sent to `recipient` from stream `id`.
+/// Publish [`Withdrawn`] after tokens have been transferred to the recipient.
 pub(crate) fn publish_withdrawn(env: &Env, recipient: &Address, id: u64, amount: i128) {
     Withdrawn {
         recipient: recipient.clone(),
         id,
         amount,
-    }
-    .publish(env);
-}
-
-/// Publish [`Cancelled`] for stream `id`, carrying the recipient's accrued
-/// amount and the sender's refund.
-pub(crate) fn publish_cancelled(
-    env: &Env,
-    sender: &Address,
-    id: u64,
-    recipient_amount: i128,
-    sender_refund: i128,
-) {
-    Cancelled {
-        sender: sender.clone(),
-        id,
-        recipient_amount,
-        sender_refund,
     }
     .publish(env);
 }

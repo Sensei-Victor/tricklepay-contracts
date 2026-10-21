@@ -100,6 +100,18 @@ end_time, cliff_time) → u64` — opens a new stream, pulls the full
   `0` (nothing vested) to `10000` (fully vested). Useful for progress
   indicators without fetching the full stream record. Added 2026-07-11.
 
+- **ABI:** `stream_exists(id) → bool` — checks whether a stream record exists,
+  including cancelled and completed streams, without writing state or
+  publishing events. Added 2026-10-20.
+
+- **ABI:** `vested_at(id, timestamp) → i128` — projects the vested amount at a
+  specified Unix timestamp using the contract's vesting calculation. Added
+  2026-10-20.
+
+- **ABI:** `max_amount() → i128` — returns the maximum amount accepted by
+  `create_stream`, so clients can validate against the deployed contract.
+  Added 2026-10-20.
+
 ### Changed
 
 - **ABI:** `Created` event payload extended with three schedule fields:

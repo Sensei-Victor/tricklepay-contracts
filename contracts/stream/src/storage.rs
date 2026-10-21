@@ -146,6 +146,11 @@ pub fn get_stream(env: &Env, id: u64) -> Option<Stream> {
     stream
 }
 
+/// Check whether a stream entry exists without modifying storage or its TTL.
+pub fn has_stream(env: &Env, id: u64) -> bool {
+    env.storage().persistent().has(&DataKey::Stream(id))
+}
+
 /// Write a stream and refresh its time to live.
 pub fn set_stream(env: &Env, id: u64, stream: &Stream) {
     let key = DataKey::Stream(id);

@@ -227,6 +227,39 @@ fn withdraw_amount_available_plus_one_receives_insufficient_balance() {
     assert_eq!(t.contract.get_stream(&id).withdrawn, 0);
 }
 
+/// Rejecting the largest request leaves the stream and token balances unchanged.
+#[test]
+fn withdraw_amount_i128_max_returns_insufficient_balance_without_changes() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+    t.set_time(600);
+
+    let stream_before = t.contract.get_stream(&id);
+    let recipient_balance_before = t.token.balance(&t.recipient);
+    let contract_balance_before = t.token.balance(&t.contract.address);
+    assert_eq!(t.contract.withdrawable(&id), 500);
+
+    assert_eq!(
+        t.contract.try_withdraw_amount(&id, &i128::MAX),
+        Err(Ok(StreamError::InsufficientBalance))
+    );
+    assert_eq!(t.contract.get_stream(&id), stream_before);
+    assert_eq!(t.token.balance(&t.recipient), recipient_balance_before);
+    assert_eq!(
+        t.token.balance(&t.contract.address),
+        contract_balance_before
+    );
+}
+
 /// Issue #57 — Partial withdrawals across multiple calls.
 #[test]
 fn test_partial_withdrawals_across_multiple_calls() {

@@ -22,6 +22,10 @@ pub const MAX_AMOUNT: i128 = i64::MAX as i128;
 /// Basis points in 100%, the scale [`StreamContract::progress`] reports on.
 pub const BPS_SCALE: u32 = 10_000;
 
+fn vested_amount_at(stream: &Stream, timestamp: u64) -> i128 {
+    stream.vested_amount(timestamp)
+}
+
 #[contract]
 pub struct StreamContract;
 
@@ -71,7 +75,15 @@ impl StreamContract {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use soroban_sdk::{Address, Env};
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let sender = Address::generate(&env);
+    /// # let recipient = Address::generate(&env);
+    /// # let token = Address::generate(&env);
     /// let id = client.create_stream(
     ///     &sender,
     ///     &recipient,
@@ -187,7 +199,13 @@ impl StreamContract {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
     /// let amount_withdrawn = client.withdraw(&stream_id);
     /// ```
     pub fn withdraw(env: Env, id: u64) -> Result<i128, StreamError> {
@@ -222,7 +240,13 @@ impl StreamContract {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
     /// let amount_withdrawn = client.withdraw_amount(&stream_id, &250_000_000);
     /// ```
     pub fn withdraw_amount(env: Env, id: u64, amount: i128) -> Result<i128, StreamError> {
@@ -287,7 +311,13 @@ impl StreamContract {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
     /// let refund_amount = client.cancel(&stream_id);
     /// ```
     pub fn cancel(env: Env, id: u64) -> Result<i128, StreamError> {
@@ -326,13 +356,13 @@ impl StreamContract {
             );
         }
 
-        events::publish_cancelled(
-            &env,
-            &stream.sender,
+        events::Cancelled {
+            sender: stream.sender.clone(),
             id,
-            settlement.recipient_remaining,
-            settlement.refund,
-        );
+            recipient_amount: settlement.recipient_remaining,
+            sender_refund: settlement.refund,
+        }
+        .publish(&env);
 
         Ok(settlement.refund)
     }
@@ -349,7 +379,13 @@ impl StreamContract {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
     /// let stream = client.get_stream(&stream_id);
     /// assert_eq!(stream.total_amount, 1_000_000_000);
     /// ```
@@ -357,11 +393,36 @@ impl StreamContract {
         storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)
     }
 
+    /// Whether a stream record exists, including cancelled or completed streams.
+    ///
+    /// This check does not modify storage or publish events.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
+    /// let exists = client.stream_exists(&stream_id);
+    /// ```
+    pub fn stream_exists(env: Env, id: u64) -> bool {
+        storage::has_stream(&env, id)
+    }
+
     /// Amount the recipient can withdraw right now.
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
     /// let available = client.withdrawable(&stream_id);
     /// ```
     pub fn withdrawable(env: Env, id: u64) -> Result<i128, StreamError> {
@@ -374,12 +435,40 @@ impl StreamContract {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
     /// let total_vested = client.vested(&stream_id);
     /// ```
     pub fn vested(env: Env, id: u64) -> Result<i128, StreamError> {
         let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
-        Ok(stream.vested_amount(env.ledger().timestamp()))
+        Ok(vested_amount_at(&stream, env.ledger().timestamp()))
+    }
+
+    /// Total amount vested by `timestamp`, including anything already withdrawn.
+    ///
+    /// Times before the start or cliff return zero. At or after the end the full
+    /// amount is vested. A cancelled stream remains frozen at its cancellation
+    /// amount for timestamps at or after cancellation.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
+    /// let projected = client.vested_at(&stream_id, &1_700_086_400);
+    /// ```
+    pub fn vested_at(env: Env, id: u64, timestamp: u64) -> Result<i128, StreamError> {
+        let stream = storage::get_stream(&env, id).ok_or(StreamError::StreamNotFound)?;
+        Ok(vested_amount_at(&stream, timestamp))
     }
 
     /// Amount not yet vested: the portion still locked in the contract that the
@@ -398,7 +487,13 @@ impl StreamContract {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
     /// let remaining_locked = client.locked(&stream_id);
     /// ```
     pub fn locked(env: Env, id: u64) -> Result<i128, StreamError> {
@@ -424,7 +519,13 @@ impl StreamContract {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
     /// let bps = client.progress(&stream_id); // e.g. 5000 for 50%
     /// ```
     pub fn progress(env: Env, id: u64) -> Result<u32, StreamError> {
@@ -435,7 +536,8 @@ impl StreamContract {
         let vested = stream.vested_amount(env.ledger().timestamp());
         let scale = i128::from(BPS_SCALE);
         let progress = vested * scale / stream.total_amount;
-        Ok(u32::try_from(progress.clamp(0, scale)).unwrap_or(0))
+        // The clamp keeps the value in 0..=BPS_SCALE, which always fits in u32.
+        Ok(u32::try_from(progress.clamp(0, scale)).expect("clamped progress fits in u32"))
     }
 
     /// Lifecycle status of a stream at the current ledger time.
@@ -454,7 +556,13 @@ impl StreamContract {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient, StreamStatus};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// # let stream_id = 0u64;
     /// let current_status = client.status(&stream_id);
     /// assert_eq!(current_status, StreamStatus::Streaming);
     /// ```
@@ -468,11 +576,33 @@ impl StreamContract {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
     /// let count = client.stream_count();
     /// ```
     pub fn stream_count(env: Env) -> u64 {
         storage::stream_count(&env)
+    }
+
+    /// Maximum amount accepted by `create_stream`, in the token's smallest unit.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use soroban_sdk::Env;
+    /// # use tricklepay_stream::{StreamContract, StreamContractClient};
+    /// # let env = Env::default();
+    /// # let contract_id = env.register(StreamContract, ());
+    /// # let client = StreamContractClient::new(&env, &contract_id);
+    /// let maximum = client.max_amount();
+    /// assert_eq!(maximum, i64::MAX as i128);
+    /// ```
+    pub fn max_amount(_env: Env) -> i128 {
+        MAX_AMOUNT
     }
 }
 

@@ -2,9 +2,73 @@
 
 use soroban_sdk::vec;
 
+use crate::storage::{BUMP_THRESHOLD, ENTRY_TTL};
 use crate::{StreamError, StreamStatus};
 
 use super::helpers::StreamTest;
+
+#[test]
+fn max_amount_view_returns_i64_max() {
+    let t = StreamTest::setup(1);
+
+    assert_eq!(t.contract.max_amount(), i64::MAX as i128);
+}
+
+#[test]
+fn stream_exists_reports_existing_unknown_cancelled_and_completed_streams() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let completed_id = t.open_default_stream(500);
+    let cancelled_id = t.open_default_stream(500);
+
+    let below_bump_threshold = ENTRY_TTL - BUMP_THRESHOLD + 1;
+    t.set_sequence(below_bump_threshold);
+    let original_ttl = t.stream_ttl(completed_id);
+    assert!(t.contract.stream_exists(&completed_id));
+    assert_eq!(t.event_publishers(), vec![&t.env]);
+    assert_eq!(t.stream_ttl(completed_id), original_ttl);
+    assert!(!t.contract.stream_exists(&99));
+    assert_eq!(t.event_publishers(), vec![&t.env]);
+
+    t.set_time(600);
+    t.contract.cancel(&cancelled_id);
+    t.set_sequence(below_bump_threshold * 2);
+    let cancelled_ttl = t.stream_ttl(cancelled_id);
+    assert!(t.contract.stream_exists(&cancelled_id));
+    assert_eq!(t.event_publishers(), vec![&t.env]);
+    assert_eq!(t.stream_ttl(cancelled_id), cancelled_ttl);
+
+    t.set_time(1_100);
+    assert!(t.contract.stream_exists(&completed_id));
+    assert_eq!(t.event_publishers(), vec![&t.env]);
+}
+
+#[test]
+fn vested_at_projects_the_schedule_and_freezes_after_cancellation() {
+    let t = StreamTest::setup(1_000);
+    t.set_time(100);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &600,
+    );
+
+    assert_eq!(t.contract.vested_at(&id, &50), 0);
+    assert_eq!(t.contract.vested_at(&id, &300), 0);
+    assert_eq!(t.contract.vested_at(&id, &1_100), 1_000);
+
+    t.set_time(700);
+    assert_eq!(t.contract.vested_at(&id, &700), t.contract.vested(&id));
+
+    t.set_time(600);
+    t.contract.cancel(&id);
+    assert_eq!(t.contract.vested_at(&id, &700), 500);
+    assert_eq!(t.contract.vested_at(&id, &1_100), 500);
+}
 
 #[test]
 fn progress_reports_basis_points() {
@@ -225,10 +289,13 @@ fn test_view_functions_do_not_modify_stored_state() {
     let _ = t.contract.get_stream(&id);
     let _ = t.contract.withdrawable(&id);
     let _ = t.contract.vested(&id);
+    let _ = t.contract.vested_at(&id, &600);
+    let _ = t.contract.stream_exists(&id);
     let _ = t.contract.locked(&id);
     let _ = t.contract.progress(&id);
     let _ = t.contract.status(&id);
     let _ = t.contract.stream_count();
+    let _ = t.contract.max_amount();
 
     let after = t.contract.get_stream(&id);
     assert_eq!(
@@ -270,6 +337,12 @@ fn test_view_functions_publish_no_events() {
     let _ = t.contract.vested(&id);
     assert_eq!(t.event_publishers(), vec![&t.env]);
 
+    let _ = t.contract.vested_at(&id, &600);
+    assert_eq!(t.event_publishers(), vec![&t.env]);
+
+    let _ = t.contract.stream_exists(&id);
+    assert_eq!(t.event_publishers(), vec![&t.env]);
+
     let _ = t.contract.locked(&id);
     assert_eq!(t.event_publishers(), vec![&t.env]);
 
@@ -280,6 +353,9 @@ fn test_view_functions_publish_no_events() {
     assert_eq!(t.event_publishers(), vec![&t.env]);
 
     let _ = t.contract.stream_count();
+    assert_eq!(t.event_publishers(), vec![&t.env]);
+
+    let _ = t.contract.max_amount();
     assert_eq!(t.event_publishers(), vec![&t.env]);
 }
 
@@ -315,9 +391,12 @@ fn test_third_party_view_access() {
     assert_eq!(t.contract.status(&id), StreamStatus::Streaming);
     assert_eq!(t.contract.withdrawable(&id), 500);
     assert_eq!(t.contract.vested(&id), 500);
+    assert_eq!(t.contract.vested_at(&id, &600), 500);
+    assert!(t.contract.stream_exists(&id));
     assert_eq!(t.contract.locked(&id), 500);
     assert_eq!(t.contract.progress(&id), 5_000);
     assert_eq!(t.contract.stream_count(), 1);
+    assert_eq!(t.contract.max_amount(), i64::MAX as i128);
 
     let auths = t.env.auths();
     assert!(

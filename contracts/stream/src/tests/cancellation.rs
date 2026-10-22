@@ -196,6 +196,16 @@ fn cancel_pending_stream_refunds_full_deposit() {
     let refund = t.contract.cancel(&id);
 
     assert_eq!(refund, 1_000);
+    t.assert_latest_stream_event_topics(
+        Cancelled {
+            sender: t.sender.clone(),
+            id,
+            recipient_amount: 0,
+            sender_refund: 1_000,
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
+
     assert_eq!(t.token.balance(&t.sender), 1_000);
     assert_eq!(t.token.balance(&t.contract.address), 0);
     assert_eq!(t.token.balance(&t.recipient), 0);
@@ -209,15 +219,6 @@ fn cancel_pending_stream_refunds_full_deposit() {
     assert_eq!(t.contract.status(&id), StreamStatus::Cancelled);
     assert_eq!(t.contract.withdrawable(&id), 0);
     assert_eq!(t.contract.progress(&id), 10_000);
-    t.assert_latest_stream_event_topics(
-        Cancelled {
-            sender: t.sender.clone(),
-            id,
-            recipient_amount: 0,
-            sender_refund: 1_000,
-        }
-        .to_xdr(&t.env, &t.contract.address),
-    );
 }
 
 /// Cancelling at the exact start leaves no elapsed time to vest, so the full

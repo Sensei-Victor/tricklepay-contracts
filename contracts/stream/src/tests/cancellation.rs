@@ -2,6 +2,7 @@
 
 use soroban_sdk::Vec;
 
+use crate::events::Cancelled;
 use crate::{StreamError, StreamStatus};
 
 use super::helpers::StreamTest;
@@ -174,6 +175,49 @@ fn cancel_immediately_after_start() {
     assert_eq!(t.contract.withdraw(&id), 1);
     assert_eq!(t.token.balance(&t.recipient), 1);
     assert_eq!(t.token.balance(&t.contract.address), 0);
+}
+
+#[test]
+fn cancel_pending_stream_refunds_full_deposit() {
+    let t = StreamTest::setup(1_000);
+    let now = 50;
+    t.set_time(now);
+    let id = t.contract.create_stream(
+        &t.sender,
+        &t.recipient,
+        &t.token_address,
+        &1_000,
+        &100,
+        &1_100,
+        &100,
+    );
+    assert_eq!(t.contract.status(&id), StreamStatus::Pending);
+
+    let refund = t.contract.cancel(&id);
+
+    assert_eq!(refund, 1_000);
+    assert_eq!(t.token.balance(&t.sender), 1_000);
+    assert_eq!(t.token.balance(&t.contract.address), 0);
+    assert_eq!(t.token.balance(&t.recipient), 0);
+
+    let stream = t.contract.get_stream(&id);
+    assert!(stream.cancelled);
+    assert_eq!(stream.start_time, now);
+    assert_eq!(stream.cliff_time, now);
+    assert_eq!(stream.end_time, now);
+
+    assert_eq!(t.contract.status(&id), StreamStatus::Cancelled);
+    assert_eq!(t.contract.withdrawable(&id), 0);
+    assert_eq!(t.contract.progress(&id), 10_000);
+    t.assert_latest_stream_event_topics(
+        Cancelled {
+            sender: t.sender.clone(),
+            id,
+            recipient_amount: 0,
+            sender_refund: 1_000,
+        }
+        .to_xdr(&t.env, &t.contract.address),
+    );
 }
 
 /// Cancelling at the exact start leaves no elapsed time to vest, so the full

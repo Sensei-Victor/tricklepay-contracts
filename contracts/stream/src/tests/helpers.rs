@@ -12,6 +12,11 @@ use crate::contract::{StreamContract, StreamContractClient};
 use crate::storage::{self, DataKey};
 use crate::{Stream, StreamError};
 
+pub const START: u64 = 100;
+pub const MIDPOINT: u64 = 600;
+pub const END: u64 = 1_100;
+pub const AMOUNT: i128 = 1_000;
+
 /// A fully wired test environment: a registered stream contract, a token to
 /// stream, and helpers to fund accounts and move the ledger clock.
 pub struct StreamTest<'a> {

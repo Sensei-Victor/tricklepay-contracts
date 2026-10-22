@@ -8,7 +8,7 @@ WASM := target/$(WASM_TARGET)/release/tricklepay_stream.wasm
 # help is the default target; running plain `make` lists available targets.
 .DEFAULT_GOAL := help
 
-# Run the same checks as CI in the same order: formatting, lints, tests.
+# Check the release overflow setting and the built contract interface.
 # Use this before opening a pull request.
 all check: check-manifest fmt-check lint test audit
 	./scripts/diff-interface.sh

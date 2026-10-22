@@ -41,6 +41,7 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 cargo audit --deny warnings
+bash ./scripts/check-release-overflow.sh
 ./scripts/diff-interface.sh
 ```
 

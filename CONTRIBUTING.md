@@ -80,6 +80,14 @@ The equivalent target is `make snapshot`. Run `make check-markdown-links` when
 changing documentation, and use `make verify-deployment CONTRACT_ID=C... NETWORK=testnet`
 to compare a deployment with the local build.
 
+## Contract documentation in the deployed spec
+
+Rustdoc comments on `#[contractimpl]` items, `#[contracttype]` types, and
+`#[contracterror]` errors are included in the deployed WASM spec. They increase
+the binary size and deployment fee, so keep them concise. Use `make size` to
+check the binary size and `make snapshot` to inspect and update the interface
+snapshot.
+
 ## Testing
 
 **Tests must control the ledger clock explicitly.** A test may never depend on

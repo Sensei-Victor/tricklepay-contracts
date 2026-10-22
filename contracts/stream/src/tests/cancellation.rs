@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::Vec;
+use soroban_sdk::{Event, Vec};
 
 use crate::events::Cancelled;
 use crate::{StreamError, StreamStatus};

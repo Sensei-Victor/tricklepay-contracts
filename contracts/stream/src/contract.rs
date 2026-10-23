@@ -76,6 +76,7 @@ impl StreamContract {
     /// # Examples
     ///
     /// ```no_run
+    /// # use soroban_sdk::testutils::Address as _;
     /// # use soroban_sdk::{Address, Env};
     /// # use tricklepay_stream::{StreamContract, StreamContractClient};
     /// # let env = Env::default();
